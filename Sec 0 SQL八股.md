@@ -877,4 +877,306 @@ Common graph representations in LeetCode and algorithm problems:
    * `org.hibernate.cfg.Configuration` (legacy) or `org.hibernate.boot.Metadata` (modern) used to build `SessionFactory`.
 
 ---
+## 40. How to configure SessionFactory for Hibernate?
+
+**Answer:**
+
+### XML-based (Legacy)
+
+1. 在类路径下创建 `hibernate.cfg.xml`，示例内容：
+
+   ```xml
+   <!DOCTYPE hibernate-configuration PUBLIC
+       "-//Hibernate/Hibernate Configuration DTD 3.0//EN"
+       "http://hibernate.sourceforge.net/hibernate-configuration-3.0.dtd">
+   <hibernate-configuration>
+     <session-factory>
+       <!-- JDBC Database connection settings -->
+       <property name="hibernate.connection.driver_class">com.mysql.cj.jdbc.Driver</property>
+       <property name="hibernate.connection.url">jdbc:mysql://localhost:3306/my_db</property>
+       <property name="hibernate.connection.username">root</property>
+       <property name="hibernate.connection.password">password</property>
+       <!-- SQL Dialect -->
+       <property name="hibernate.dialect">org.hibernate.dialect.MySQL8Dialect</property>
+       <!-- Show SQL in console -->
+       <property name="hibernate.show_sql">true</property>
+       <!-- Automatically update schema -->
+       <property name="hibernate.hbm2ddl.auto">update</property>
+       <!-- 其他可选配置：缓存、连接池等 -->
+     </session-factory>
+   </hibernate-configuration>
+   ```
+2. 在代码中引导 `SessionFactory`：
+
+   ```java
+   Configuration cfg = new Configuration().configure("hibernate.cfg.xml");
+   SessionFactory sessionFactory = cfg.buildSessionFactory();
+   ```
+
+---
+
+### Java-based (Hibernate 5+)
+
+1. 使用 `StandardServiceRegistryBuilder` 和 `MetadataSources`：
+
+   ```java
+   StandardServiceRegistry registry = new StandardServiceRegistryBuilder()
+       .applySetting("hibernate.connection.driver_class", "com.mysql.cj.jdbc.Driver")
+       .applySetting("hibernate.connection.url", "jdbc:mysql://localhost:3306/my_db")
+       .applySetting("hibernate.connection.username", "root")
+       .applySetting("hibernate.connection.password", "password")
+       .applySetting("hibernate.dialect", "org.hibernate.dialect.MySQL8Dialect")
+       .applySetting("hibernate.hbm2ddl.auto", "update")
+       .build();
+
+   MetadataSources sources = new MetadataSources(registry)
+       .addAnnotatedClass(MyEntity.class); // 添加你的 @Entity 类
+
+   Metadata metadata = sources.getMetadataBuilder().build();
+   SessionFactory sessionFactory = metadata.getSessionFactoryBuilder().build();
+   ```
+2. 在 Spring Boot 项目中，只需引入 `spring-boot-starter-data-jpa` 并在 `application.properties` 中配置：
+
+   ```properties
+   spring.datasource.url=jdbc:mysql://localhost:3306/my_db
+   spring.datasource.username=root
+   spring.datasource.password=password
+   spring.jpa.hibernate.ddl-auto=update
+   spring.jpa.show-sql=true
+   ```
+
+   Spring Boot 会自动创建并管理 `LocalContainerEntityManagerFactoryBean`（内部使用 Hibernate 的 `SessionFactory`），并扫描同包或子包下的所有 `@Entity` 类。
+
+---
+
+## 41. What is HQL (Hibernate Query Language)?
+
+**Answer:**
+
+* HQL（Hibernate Query Language）是一种面向对象的查询语言，语法类似 SQL，但操作的对象是 Hibernate 映射的实体（Entity）及其属性，而不是直接针对数据库表/列。
+
+* **主要特点**：
+
+  1. **基于实体类**：查询中使用的是实体类名和属性名，而非数据库表名或列名。
+  2. **支持继承与多态**：可在继承体系中进行查询。
+  3. **自动联表**：当实体之间存在关联时，HQL 会根据映射自动生成 JOIN 语句。
+  4. **支持聚合、分组、排序**：完全兼容常见的 `SELECT`、`WHERE`、`GROUP BY`、`HAVING`、`ORDER BY`、`JOIN` 等语法。
+
+* **示例**：
+
+  ```java
+  // 简单查询
+  String hql = "FROM User u WHERE u.age > :minAge";
+  List<User> list = session.createQuery(hql, User.class)
+                           .setParameter("minAge", 18)
+                           .list();
+
+  // Join 查询
+  String hql2 = "SELECT o FROM Order o JOIN o.customer c WHERE c.name = :name";
+  List<Order> orders = session.createQuery(hql2, Order.class)\                              .setParameter("name", "Alice")
+                              .list();
+  ```
+
+---
+
+## 42. What is `load()` / `get()` in Hibernate?
+
+**Answer:**
+
+* 这两个方法都是根据主键（ID）从数据库中获取实体对象，但行为方式不同：
+
+  1. **`get(Class<T> entityType, Serializable id)`**
+
+     * 立即发起数据库查询，如果记录存在就返回实体，否则返回 `null`。
+     * 返回的对象已完全初始化。
+     * 示例：
+
+       ```java
+       User user = session.get(User.class, 1L);
+       if (user == null) {
+           // 未找到 ID 为 1 的用户
+       }
+       ```
+  2. **`load(Class<T> entityType, Serializable id)`**
+
+     * 返回一个代理对象（proxy），不会立即查询数据库，当首次访问该代理对象的非 ID 属性时，才触发查询。
+     * 如果该 ID 对应的记录不存在，则在初始化代理时抛出 `ObjectNotFoundException`。
+     * 适用于只需引用主键、暂不访问其他字段，或仅为关联提供引用的场景。
+     * 示例：
+
+       ```java
+       User userProxy = session.load(User.class, 1L);
+       // 此时尚未发起 SQL 查询
+       System.out.println(userProxy.getName()); // 访问属性时，触发查询
+       ```
+
+---
+
+## 43. Explain how to use Hibernate `@OneToMany`.
+
+**Answer:**
+
+* `@OneToMany` 用于在父实体（One）与子实体（Many）之间建立一对多关联，常见用法有双向（bidirectional）或单向（unidirectional）两种。
+
+### 双向关联示例
+
+```java
+@Entity
+public class Department {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String name;
+
+    @OneToMany(mappedBy = "department", cascade = CascadeType.ALL, orphanRemoval = true)
+    private List<Employee> employees = new ArrayList<>();
+
+    // getters/setters
+}
+
+@Entity
+public class Employee {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String name;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "department_id")
+    private Department department;
+
+    // getters/setters
+}
+```
+
+* **属性解释**：
+
+  * `mappedBy = "department"`：表示在 `Employee` 实体中，通过字段 `department` 维护这段关联（即外键在 `Employee` 表）。
+  * `cascade = CascadeType.ALL`：对 `Department` 执行的增删改操作会级联到其 `employees` 列表。
+  * `orphanRemoval = true`：若将 `Employee` 对象从 `employees` 集合中移除，该记录将自动从数据库删除。
+  * `fetch = FetchType.LAZY`：默认延迟加载子集合，只有调用 `getEmployees()` 时才执行查询。
+
+### 单向关联示例
+
+```java
+@Entity
+public class Department {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String name;
+
+    @OneToMany(cascade = CascadeType.ALL)
+    @JoinColumn(name = "department_id") // 在 Employee 表中新增外键列 department_id
+    private List<Employee> employees = new ArrayList<>();
+
+    // getters/setters
+}
+
+@Entity
+public class Employee {
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    private String name;
+    // 无需在 Employee 中声明 Department 字段
+}
+```
+
+* **属性解释**：
+
+  * 使用 `@JoinColumn(name = "department_id")` 指定外键列直接出现在 `Employee` 表中，关联由 `Department` 单向维护。
+
+---
+
+## 44. Lazy loading and eager loading in Hibernate
+
+**Answer:**
+
+* **Lazy Loading（延迟加载，`FetchType.LAZY`）**
+
+  * 关联实体或集合在加载父实体时，并不会立即查询；只有在首次访问关联属性时，才会发起 SQL 查询。
+  * 优点：避免一次性加载过多数据，减少初始查询负担。
+  * 缺点：若在 Session 关闭后访问，可能抛出 `LazyInitializationException`。
+
+* **Eager Loading（急加载，`FetchType.EAGER`）**
+
+  * 一旦加载父实体，Hibernate 会在同一次查询或通过额外 JOIN/SELECT，立即加载关联实体或集合。
+  * 优点：关联对象可立即使用，无需额外查询。
+  * 缺点：可能一次性加载大量不必要数据，影响性能。
+
+* **示例**:
+
+  ```java
+  @Entity
+  public class Department {
+      // …
+
+      @OneToMany(mappedBy = "department", fetch = FetchType.LAZY)
+      private List<Employee> employees; // 延迟加载
+  }
+
+  @Entity
+  public class Employee {
+      // …
+
+      @ManyToOne(fetch = FetchType.EAGER)
+      @JoinColumn(name = "department_id")
+      private Department department; // 急加载
+  }
+  ```
+
+---
+
+## 45. How do you define an entity?
+
+**Answer:**
+
+* 在 JPA/Hibernate 中，实体（Entity）是一个使用 `@Entity` 注解标注的普通 Java 类，必须满足以下条件：
+
+  1. 至少有一个 `@Id` 标注的字段，用作主键。
+  2. 需要一个无参构造器（可以是 `public` 或 `protected`）。
+  3. 类名和字段可通过 `@Table`、`@Column` 等注解映射到数据库表和列；若省略，则默认使用类名/字段名。
+
+* **示例**:
+
+  ```java
+  import javax.persistence.*;
+
+  @Entity
+  @Table(name = "users") // 可选，默认表名为类名 User
+  public class User {
+      @Id
+      @GeneratedValue(strategy = GenerationType.IDENTITY)
+      private Long id;
+
+      @Column(nullable = false, length = 100)
+      private String username;
+
+      private String email;
+
+      protected User() { /* 无参构造器 */ }
+
+      public User(String username, String email) {
+          this.username = username;
+          this.email = email;
+      }
+
+      // getters/setters …
+  }
+  ```
+
+---
+
+## 46. What library do you use to connect to the database?
+
+**Answer:**
+
+* **JDBC（Java Database Connectivity）**：JDK 内置的低级别数据库访问接口，所有 Java 应用都可直接使用。
+* **JPA / Hibernate**：在 JDBC 之上提供 ORM（对象关系映射），简化增删改查操作。Spring Data JPA 实际是基于 Hibernate 实现的。
+* **Spring Data JDBC**：更轻量的 Spring 对 JDBC 的封装，提供 Repository 风格的开发，但没有完整的 ORM 特性。
 
